@@ -772,7 +772,7 @@ void errorLogCallback(void *pArg, int iErrCode, const char *zMsg) {
 
 int sqlite3_os_init(void){
   //sqlite3_config(SQLITE_CONFIG_LOG, errorLogCallback, NULL);
-  sqlite3_vfs_register(sqlite3_ESP32vfs(), 1);
+  sqlite3_vfs_register(sqlite3_RP2040vfs(), 1);
   sqlite3_auto_extension((void (*)())registerFunctions);
   return SQLITE_OK;
 }
