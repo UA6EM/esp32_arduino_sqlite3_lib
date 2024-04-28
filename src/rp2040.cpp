@@ -15,7 +15,7 @@
 #include <time.h>
 #include <sqlite3.h>
 #include <Arduino.h>
-#include <esp_spi_flash.h>
+//#include <esp_spi_flash.h>
 #include <sys/stat.h>
 #include <assert.h>
 #include <sys/types.h>
@@ -65,8 +65,8 @@ uint64_t decode_unsigned_varint(const uint8_t *data, int &decoded_bytes) {
 /*
 ** Size of the write buffer used by journal files in bytes.
 */
-#ifndef SQLITE_ESP32VFS_BUFFERSZ
-# define SQLITE_ESP32VFS_BUFFERSZ 8192
+#ifndef SQLITE_RP2040VFS_BUFFERSZ
+# define SQLITE_RP2040VFS_BUFFERSZ 8192
 #endif
 
 /*
@@ -78,8 +78,8 @@ uint64_t decode_unsigned_varint(const uint8_t *data, int &decoded_bytes) {
 ** When using this VFS, the sqlite3_file* handles that SQLite uses are
 ** actually pointers to instances of type ESP32File.
 */
-typedef struct ESP32File ESP32File;
-struct ESP32File {
+typedef struct RP2040File RP2040File;
+struct RP2040File {
   sqlite3_file base;              /* Base class. Must be first. */
   FILE *fp;                       /* File descriptor */
 
@@ -92,8 +92,8 @@ struct ESP32File {
 ** Write directly to the file passed as the first argument. Even if the
 ** file has a write-buffer (ESP32File.aBuffer), ignore it.
 */
-static int ESP32DirectWrite(
-  ESP32File *p,                    /* File handle */
+static int RP2040DirectWrite(
+  RP2040File *p,                    /* File handle */
   const void *zBuf,               /* Buffer containing data to write */
   int iAmt,                       /* Size of data to write in bytes */
   sqlite_int64 iOfst              /* File offset to write to */
@@ -125,11 +125,11 @@ static int ESP32DirectWrite(
 ** no-op if this particular file does not have a buffer (i.e. it is not
 ** a journal file) or if the buffer is currently empty.
 */
-static int ESP32FlushBuffer(ESP32File *p){
+static int RP2040FlushBuffer(RP2040File *p){
   int rc = SQLITE_OK;
   //Serial.println("fn: FlushBuffer");
   if( p->nBuffer ){
-    rc = ESP32DirectWrite(p, p->aBuffer, p->nBuffer, p->iBufferOfst);
+    rc = RP2040DirectWrite(p, p->aBuffer, p->nBuffer, p->iBufferOfst);
     p->nBuffer = 0;
   }
   //Serial.println("fn:FlushBuffer:Success");
@@ -139,11 +139,11 @@ static int ESP32FlushBuffer(ESP32File *p){
 /*
 ** Close a file.
 */
-static int ESP32Close(sqlite3_file *pFile){
+static int RP2040Close(sqlite3_file *pFile){
   int rc;
   //Serial.println("fn: Close");
-  ESP32File *p = (ESP32File*)pFile;
-  rc = ESP32FlushBuffer(p);
+  RP2040File *p = (RP2040File*)pFile;
+  rc = RP2040FlushBuffer(p);
   sqlite3_free(p->aBuffer);
   fclose(p->fp);
   //Serial.println("fn:Close:Success");
@@ -153,14 +153,14 @@ static int ESP32Close(sqlite3_file *pFile){
 /*
 ** Read data from a file.
 */
-static int ESP32Read(
+static int RP2040Read(
   sqlite3_file *pFile, 
   void *zBuf, 
   int iAmt, 
   sqlite_int64 iOfst
 ){
       //Serial.println("fn: Read");
-  ESP32File *p = (ESP32File*)pFile;
+  RP2040File *p = (RP2040File*)pFile;
   off_t ofst;                     /* Return value from lseek() */
   int nRead;                      /* Return value from read() */
   int rc;                         /* Return code from ESP32FlushBuffer() */
@@ -171,7 +171,7 @@ static int ESP32Read(
   ** unnecessary write here, but in practice SQLite will rarely read from
   ** a journal file when there is data cached in the write-buffer.
   */
-  rc = ESP32FlushBuffer(p);
+  rc = RP2040FlushBuffer(p);
   if( rc!=SQLITE_OK ){
     return rc;
   }
@@ -195,14 +195,14 @@ static int ESP32Read(
 /*
 ** Write data to a crash-file.
 */
-static int ESP32Write(
+static int RP2040Write(
   sqlite3_file *pFile, 
   const void *zBuf, 
   int iAmt, 
   sqlite_int64 iOfst
 ){
       //Serial.println("fn: Write");
-  ESP32File *p = (ESP32File*)pFile;
+  RP2040File *p = (RP2040File*)pFile;
   
   if( p->aBuffer ){
     char *z = (char *)zBuf;       /* Pointer to remaining data to write */
@@ -216,8 +216,8 @@ static int ESP32Write(
       ** following the data already buffered, flush the buffer. Flushing
       ** the buffer is a no-op if it is empty.  
       */
-      if( p->nBuffer==SQLITE_ESP32VFS_BUFFERSZ || p->iBufferOfst+p->nBuffer!=i ){
-        int rc = ESP32FlushBuffer(p);
+      if( p->nBuffer==SQLITE_RP2040VFS_BUFFERSZ || p->iBufferOfst+p->nBuffer!=i ){
+        int rc = RP2040FlushBuffer(p);
         if( rc!=SQLITE_OK ){
           return rc;
         }
@@ -226,7 +226,7 @@ static int ESP32Write(
       p->iBufferOfst = i - p->nBuffer;
 
       /* Copy as much data as possible into the buffer. */
-      nCopy = SQLITE_ESP32VFS_BUFFERSZ - p->nBuffer;
+      nCopy = SQLITE_RP2040VFS_BUFFERSZ - p->nBuffer;
       if( nCopy>n ){
         nCopy = n;
       }
@@ -238,7 +238,7 @@ static int ESP32Write(
       z += nCopy;
     }
   }else{
-    return ESP32DirectWrite(p, zBuf, iAmt, iOfst);
+    return RP2040DirectWrite(p, zBuf, iAmt, iOfst);
   }
   //Serial.println("fn:Write:Success");
 
@@ -249,10 +249,10 @@ static int ESP32Write(
 ** Truncate a file. This is a no-op for this VFS (see header comments at
 ** the top of the file).
 */
-static int ESP32Truncate(sqlite3_file *pFile, sqlite_int64 size){
+static int RP2040Truncate(sqlite3_file *pFile, sqlite_int64 size){
       //Serial.println("fn: Truncate");
 #if 0
-  if( ftruncate(((ESP32File *)pFile)->fd, size) ) return SQLITE_IOERR_TRUNCATE;
+  if( ftruncate(((RP2040File *)pFile)->fd, size) ) return SQLITE_IOERR_TRUNCATE;
 #endif
   //Serial.println("fn:Truncate:Success");
   return SQLITE_OK;
@@ -263,10 +263,10 @@ static int ESP32Truncate(sqlite3_file *pFile, sqlite_int64 size){
 */
 static int ESP32Sync(sqlite3_file *pFile, int flags){
       //Serial.println("fn: Sync");
-  ESP32File *p = (ESP32File*)pFile;
+  RP2040File *p = (RP2040File*)pFile;
   int rc;
 
-  rc = ESP32FlushBuffer(p);
+  rc = RP2040FlushBuffer(p);
   if( rc!=SQLITE_OK ){
     return rc;
   }
@@ -282,18 +282,18 @@ static int ESP32Sync(sqlite3_file *pFile, int flags){
 /*
 ** Write the size of the file in bytes to *pSize.
 */
-static int ESP32FileSize(sqlite3_file *pFile, sqlite_int64 *pSize){
+static int RP2040FileSize(sqlite3_file *pFile, sqlite_int64 *pSize){
       //Serial.println("fn: FileSize");
-  ESP32File *p = (ESP32File*)pFile;
+  RP2040File *p = (RP2040File*)pFile;
   int rc;                         /* Return code from fstat() call */
   struct stat sStat;              /* Output of fstat() call */
 
   /* Flush the contents of the buffer to disk. As with the flush in the
-  ** ESP32Read() method, it would be possible to avoid this and save a write
+  ** RP2040Read() method, it would be possible to avoid this and save a write
   ** here and there. But in practice this comes up so infrequently it is
   ** not worth the trouble.
   */
-  rc = ESP32FlushBuffer(p);
+  rc = RP2040FlushBuffer(p);
   if( rc!=SQLITE_OK ){
     return rc;
   }
@@ -315,13 +315,13 @@ static int ESP32FileSize(sqlite3_file *pFile, sqlite_int64 *pSize){
 ** a reserved lock on the database file. This ensures that if a hot-journal
 ** file is found in the file-system it is rolled back.
 */
-static int ESP32Lock(sqlite3_file *pFile, int eLock){
+static int RP2040Lock(sqlite3_file *pFile, int eLock){
   return SQLITE_OK;
 }
-static int ESP32Unlock(sqlite3_file *pFile, int eLock){
+static int RP2040Unlock(sqlite3_file *pFile, int eLock){
   return SQLITE_OK;
 }
-static int ESP32CheckReservedLock(sqlite3_file *pFile, int *pResOut){
+static int RP2040CheckReservedLock(sqlite3_file *pFile, int *pResOut){
   *pResOut = 0;
   return SQLITE_OK;
 }
@@ -329,7 +329,7 @@ static int ESP32CheckReservedLock(sqlite3_file *pFile, int *pResOut){
 /*
 ** No xFileControl() verbs are implemented by this VFS.
 */
-static int ESP32FileControl(sqlite3_file *pFile, int op, void *pArg){
+static int RP2040FileControl(sqlite3_file *pFile, int op, void *pArg){
   return SQLITE_OK;
 }
 
@@ -338,10 +338,10 @@ static int ESP32FileControl(sqlite3_file *pFile, int op, void *pArg){
 ** may return special values allowing SQLite to optimize file-system 
 ** access to some extent. But it is also safe to simply return 0.
 */
-static int ESP32SectorSize(sqlite3_file *pFile){
+static int RP2040SectorSize(sqlite3_file *pFile){
   return 0;
 }
-static int ESP32DeviceCharacteristics(sqlite3_file *pFile){
+static int RP2040DeviceCharacteristics(sqlite3_file *pFile){
   return 0;
 }
 
@@ -359,7 +359,7 @@ static int ESP32DeviceCharacteristics(sqlite3_file *pFile){
 ** Query the file-system to see if the named file exists, is readable or
 ** is both readable and writable.
 */
-static int ESP32Access(
+static int RP2040Access(
   sqlite3_vfs *pVfs, 
   const char *zPath, 
   int flags, 
@@ -388,30 +388,30 @@ static char dbrootpath[MAXPATHNAME+1];
 /*
 ** Open a file handle.
 */
-static int ESP32Open(
+static int RP2040Open(
   sqlite3_vfs *pVfs,              /* VFS */
   const char *zName,              /* File to open, or 0 for a temp file */
   sqlite3_file *pFile,            /* Pointer to ESP32File struct to populate */
   int flags,                      /* Input SQLITE_OPEN_XXX flags */
   int *pOutFlags                  /* Output SQLITE_OPEN_XXX flags (or NULL) */
 ){
-  static const sqlite3_io_methods ESP32io = {
+  static const sqlite3_io_methods RP2040io = {
     1,                            /* iVersion */
-    ESP32Close,                    /* xClose */
-    ESP32Read,                     /* xRead */
-    ESP32Write,                    /* xWrite */
-    ESP32Truncate,                 /* xTruncate */
-    ESP32Sync,                     /* xSync */
-    ESP32FileSize,                 /* xFileSize */
-    ESP32Lock,                     /* xLock */
-    ESP32Unlock,                   /* xUnlock */
-    ESP32CheckReservedLock,        /* xCheckReservedLock */
-    ESP32FileControl,              /* xFileControl */
-    ESP32SectorSize,               /* xSectorSize */
-    ESP32DeviceCharacteristics     /* xDeviceCharacteristics */
+    RP2040Close,                    /* xClose */
+    RP2040Read,                     /* xRead */
+    RP2040Write,                    /* xWrite */
+    RP2040Truncate,                 /* xTruncate */
+    RP2040Sync,                     /* xSync */
+    RP2040FileSize,                 /* xFileSize */
+    RP2040Lock,                     /* xLock */
+    RP2040Unlock,                   /* xUnlock */
+    RP2040CheckReservedLock,        /* xCheckReservedLock */
+    ERP2040FileControl,             /* xFileControl */
+    RP2040SectorSize,               /* xSectorSize */
+    RP2040DeviceCharacteristics     /* xDeviceCharacteristics */
   };
 
-  ESP32File *p = (ESP32File*)pFile; /* Populate this structure */
+  RP2040File *p = (RP2040File*)pFile; /* Populate this structure */
   int oflags = 0;                 /* flags to pass to open() call */
   char *aBuf = 0;
 	char mode[5];
@@ -420,7 +420,7 @@ static int ESP32Open(
 	strcpy(mode, "r");
 
   if( flags&SQLITE_OPEN_MAIN_JOURNAL ){
-    aBuf = (char *)sqlite3_malloc(SQLITE_ESP32VFS_BUFFERSZ);
+    aBuf = (char *)sqlite3_malloc(SQLITE_RP2040VFS_BUFFERSZ);
     if( !aBuf ){
       return SQLITE_NOMEM;
     }
@@ -442,7 +442,7 @@ static int ESP32Open(
       strcpy(mode, "r+");
 	}
 
-  memset(p, 0, sizeof(ESP32File));
+  memset(p, 0, sizeof(RP2040File));
   //p->fd = open(zName, oflags, 0600);
   //p->fd = open(zName, oflags, S_IRUSR | S_IWUSR);
   if (zName == 0) {
@@ -490,7 +490,7 @@ static int ESP32Open(
   if( pOutFlags ){
     *pOutFlags = flags;
   }
-  p->base.pMethods = &ESP32io;
+  p->base.pMethods = &RP2040io;
   //Serial.println("fn:Open:Success");
   return SQLITE_OK;
 }
@@ -500,7 +500,7 @@ static int ESP32Open(
 ** is non-zero, then ensure the file-system modification to delete the
 ** file has been synced to disk before returning.
 */
-static int ESP32Delete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
+static int RP2040Delete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
   int rc;                         /* Return code */
 
       //Serial.println("fn: Delete");
@@ -545,7 +545,7 @@ static int ESP32Delete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
 **   1. Path components are separated by a '/'. and 
 **   2. Full paths begin with a '/' character.
 */
-static int ESP32FullPathname(
+static int RP2040FullPathname(
   sqlite3_vfs *pVfs,              /* VFS */
   const char *zPath,              /* Input path (possibly a relative path) */
   int nPathOut,                   /* Size of output buffer in bytes */
@@ -580,17 +580,17 @@ static int ESP32FullPathname(
 ** extensions compiled as shared objects. This simple VFS does not support
 ** this functionality, so the following functions are no-ops.
 */
-static void *ESP32DlOpen(sqlite3_vfs *pVfs, const char *zPath){
+static void *RP2040DlOpen(sqlite3_vfs *pVfs, const char *zPath){
   return 0;
 }
-static void ESP32DlError(sqlite3_vfs *pVfs, int nByte, char *zErrMsg){
+static void RP2040DlError(sqlite3_vfs *pVfs, int nByte, char *zErrMsg){
   sqlite3_snprintf(nByte, zErrMsg, "Loadable extensions are not supported");
   zErrMsg[nByte-1] = '\0';
 }
-static void (*ESP32DlSym(sqlite3_vfs *pVfs, void *pH, const char *z))(void){
+static void (*RP2040DlSym(sqlite3_vfs *pVfs, void *pH, const char *z))(void){
   return 0;
 }
-static void ESP32DlClose(sqlite3_vfs *pVfs, void *pHandle){
+static void RP2040DlClose(sqlite3_vfs *pVfs, void *pHandle){
   return;
 }
 
@@ -598,7 +598,7 @@ static void ESP32DlClose(sqlite3_vfs *pVfs, void *pHandle){
 ** Parameter zByte points to a buffer nByte bytes in size. Populate this
 ** buffer with pseudo-random data.
 */
-static int ESP32Randomness(sqlite3_vfs *pVfs, int nByte, char *zByte){
+static int RP2040Randomness(sqlite3_vfs *pVfs, int nByte, char *zByte){
   return SQLITE_OK;
 }
 
@@ -606,7 +606,7 @@ static int ESP32Randomness(sqlite3_vfs *pVfs, int nByte, char *zByte){
 ** Sleep for at least nMicro microseconds. Return the (approximate) number 
 ** of microseconds slept for.
 */
-static int ESP32Sleep(sqlite3_vfs *pVfs, int nMicro){
+static int RP2040Sleep(sqlite3_vfs *pVfs, int nMicro){
   sleep(nMicro / 1000000);
   usleep(nMicro % 1000000);
   return nMicro;
@@ -623,7 +623,7 @@ static int ESP32Sleep(sqlite3_vfs *pVfs, int nMicro){
 ** value, it will stop working some time in the year 2038 AD (the so-called
 ** "year 2038" problem that afflicts systems that store time this way). 
 */
-static int ESP32CurrentTime(sqlite3_vfs *pVfs, double *pTime){
+static int RP2040CurrentTime(sqlite3_vfs *pVfs, double *pTime){
   time_t t = time(0);
   *pTime = t/86400.0 + 2440587.5; 
   return SQLITE_OK;
@@ -635,27 +635,27 @@ static int ESP32CurrentTime(sqlite3_vfs *pVfs, double *pTime){
 **
 **   sqlite3_vfs_register(sqlite3_ESP32vfs(), 0);
 */
-sqlite3_vfs *sqlite3_ESP32vfs(void){
-  static sqlite3_vfs ESP32vfs = {
+sqlite3_vfs *sqlite3_RP2040vfs(void){
+  static sqlite3_vfs RP2040vfs = {
     1,                            // iVersion
-    sizeof(ESP32File),             // szOsFile
+    sizeof(RP2040File),             // szOsFile
     MAXPATHNAME,                  // mxPathname
     0,                            // pNext
-    "ESP32",                       // zName
+    "RP2040",                       // zName
     0,                            // pAppData
-    ESP32Open,                     // xOpen
-    ESP32Delete,                   // xDelete
-    ESP32Access,                   // xAccess
-    ESP32FullPathname,             // xFullPathname
-    ESP32DlOpen,                   // xDlOpen
-    ESP32DlError,                  // xDlError
-    ESP32DlSym,                    // xDlSym
-    ESP32DlClose,                  // xDlClose
-    ESP32Randomness,               // xRandomness
-    ESP32Sleep,                    // xSleep
-    ESP32CurrentTime,              // xCurrentTime
+    RP2040Open,                     // xOpen
+    RP2040Delete,                   // xDelete
+    RP2040Access,                   // xAccess
+    RP2040FullPathname,             // xFullPathname
+    RP2040DlOpen,                   // xDlOpen
+    RP2040DlError,                  // xDlError
+    RP2040DlSym,                    // xDlSym
+    RP2040DlClose,                  // xDlClose
+    RP2040Randomness,               // xRandomness
+    RP2040Sleep,                    // xSleep
+    RP2040CurrentTime,              // xCurrentTime
   };
-  return &ESP32vfs;
+  return &RP2040vfs;
 }
 
 static void shox96_0_2c(sqlite3_context *context, int argc, sqlite3_value **argv) {
